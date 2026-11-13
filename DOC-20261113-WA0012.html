@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Electricity Bill Calculator</title>
+<style>
+  :root { --ink:#13263b; --muted:#5b6b7c; --line:#d5dde6; --bg:#eef2f6; --card:#fff; --accent:#e8a317; --accent-ink:#3d2a00; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); line-height:1.45; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 1.6rem; margin: 8px 0 4px; }
+  p.sub { margin: 0 0 18px; color: var(--muted); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  label { display:block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+  input, select { width: 100%; padding: 10px; font-size: 1rem; border: 1px solid var(--line); border-radius: 8px; background:#fff; color:var(--ink); }
+  input:focus, select:focus, button:focus-visible { outline: 3px solid #f3cf7a; outline-offset: 1px; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; min-width:0; }
+  .slab { display:flex; gap:8px; align-items:flex-end; margin-bottom:6px; }
+  .slab div { flex:1; min-width:0; }
+  button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background:#fff; padding: 10px 14px; cursor:pointer; color:var(--ink); }
+  button.primary { width:100%; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; padding: 14px; font-size: 1.05rem; }
+  button.x { padding: 10px 12px; }
+  #bill { display:none; }
+  table { width:100%; border-collapse: collapse; font-size: .95rem; }
+  td { padding: 7px 0; border-bottom: 1px dashed var(--line); }
+  td:last-child { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  tr.sub td { color: var(--muted); font-size:.85rem; padding-left: 12px; }
+  tr.total td { border-bottom:none; border-top: 2px solid var(--ink); font-size: 1.35rem; font-weight: 800; padding-top: 12px; }
+  .err { color:#b3261e; font-size:.9rem; margin-top:8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Electricity Bill Calculator</h1>
+  <p class="sub">Works for any tariff: set your own slab rates and charges.</p>
+
+  <section>
+    <h2>1. Units consumed</h2>
+    <label for="mode">How do you want to enter units?</label>
+    <select id="mode">
+      <option value="units">Total units (kWh)</option>
+      <option value="readings">Meter readings (previous and current)</option>
+    </select>
+    <div id="unitsBox"><label for="units">Units (kWh)</label><input id="units" type="number" min="0" step="any" inputmode="decimal" placeholder="e.g. 320"></div>
+    <div id="readBox" class="row" style="display:none">
+      <div><label for="prev">Previous reading</label><input id="prev" type="number" min="0" step="any" inputmode="decimal"></div>
+      <div><label for="curr">Current reading</label><input id="curr" type="number" min="0" step="any" inputmode="decimal"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Tariff slabs</h2>
+    <label for="preset">Start from a preset</label>
+    <select id="preset">
+      <option value="slab">Sample slab tariff</option>
+      <option value="flat">Flat rate (one rate for all units)</option>
+      <option value="custom">Blank (I will fill it)</option>
+    </select>
+    <label>Each row: units up to, and rate per unit. Leave "up to" empty on the last row for all remaining units.</label>
+    <div id="slabs"></div>
+    <button type="button" id="addSlab">Add slab</button>
+  </section>
+
+  <section>
+    <h2>3. Other charges</h2>
+    <div class="row">
+      <div><label for="fixed">Fixed / meter charge</label><input id="fixed" type="number" min="0" step="any" inputmode="decimal" value="0"></div>
+      <div><label for="fuel">Fuel surcharge per unit</label><input id="fuel" type="number" min="0" step="any" inputmode="decimal" value="0"></div>
+    </div>
+    <div class="row">
+      <div><label for="duty">Tax / duty (%)</label><input id="duty" type="number" min="0" step="any" inputmode="decimal" value="0"></div>
+      <div><label for="disc">Subsidy / discount</label><input id="disc" type="number" min="0" step="any" inputmode="decimal" value="0"></div>
+    </div>
+    <label for="cur">Currency symbol</label>
+    <input id="cur" type="text" maxlength="3" value="₹">
+  </section>
+
+  <button class="primary" id="calc" type="button">Calculate bill</button>
+  <div id="error" class="err" role="alert"></div>
+
+  <section id="bill" aria-live="polite" style="margin-top:14px">
+    <h2>Your bill</h2>
+    <table id="out"></table>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const presets = {
+  slab: [{upto:100, rate:3.5}, {upto:200, rate:5}, {upto:400, rate:7}, {upto:'', rate:9}],
+  flat: [{upto:'', rate:6}],
+  custom: [{upto:'', rate:''}]
+};
+
+function renderSlabs(list) {
+  $('slabs').innerHTML = '';
+  list.forEach(s => addSlab(s.upto, s.rate));
+}
+function addSlab(upto = '', rate = '') {
+  const d = document.createElement('div');
+  d.className = 'slab';
+  d.innerHTML = '<div><label>Up to (units)</label><input class="upto" type="number" min="0" step="any" inputmode="decimal"></div>' +
+                '<div><label>Rate per unit</label><input class="rate" type="number" min="0" step="any" inputmode="decimal"></div>' +
+                '<button type="button" class="x" aria-label="Remove slab">✕</button>';
+  d.querySelector('.upto').value = upto;
+  d.querySelector('.rate').value = rate;
+  d.querySelector('.x').onclick = () => d.remove();
+  $('slabs').appendChild(d);
+}
+
+$('preset').onchange = e => renderSlabs(presets[e.target.value]);
+$('addSlab').onclick = () => addSlab();
+$('mode').onchange = e => {
+  $('unitsBox').style.display = e.target.value === 'units' ? '' : 'none';
+  $('readBox').style.display = e.target.value === 'readings' ? '' : 'none';
+};
+
+const num = id => parseFloat($(id).value) || 0;
+
+$('calc').onclick = () => {
+  const err = $('error'); err.textContent = '';
+  const cur = $('cur').value || '';
+  const money = n => cur + n.toFixed(2);
+
+  let units;
+  if ($('mode').value === 'units') units = num('units');
+  else {
+    units = num('curr') - num('prev');
+    if (units < 0) { err.textContent = 'Current reading must be higher than previous reading.'; return; }
+  }
+  if (!(units > 0)) { err.textContent = 'Enter the units consumed.'; return; }
+
+  const slabs = [...document.querySelectorAll('.slab')].map(r => ({
+    upto: r.querySelector('.upto').value === '' ? Infinity : parseFloat(r.querySelector('.upto').value),
+    rate: parseFloat(r.querySelector('.rate').value)
+  }));
+  if (!slabs.length || slabs.some(s => isNaN(s.rate))) { err.textContent = 'Fill the rate in every slab row.'; return; }
+  for (let i = 1; i < slabs.length; i++) {
+    if (slabs[i].upto <= slabs[i-1].upto) { err.textContent = 'Slab limits must increase from top to bottom.'; return; }
+  }
+
+  let rows = '', energy = 0, prevLimit = 0, left = units;
+  slabs.forEach(s => {
+    if (left <= 0) return;
+    const size = s.upto - prevLimit;
+    const used = Math.min(left, size);
+    const amt = used * s.rate;
+    energy += amt; left -= used;
+    rows += `<tr class="sub"><td>${+used.toFixed(2)} units × ${cur}${s.rate}</td><td>${money(amt)}</td></tr>`;
+    prevLimit = s.upto;
+  });
+  if (left > 0) { err.textContent = 'Units exceed your last slab. Leave the last "up to" empty to cover all remaining units.'; return; }
+
+  const fixed = num('fixed'), fuel = num('fuel') * units;
+  const subtotal = energy + fixed + fuel;
+  const duty = subtotal * num('duty') / 100;
+  const disc = num('disc');
+  const total = Math.max(0, subtotal + duty - disc);
+
+  $('out').innerHTML =
+    `<tr><td>Units consumed</td><td>${+units.toFixed(2)} kWh</td></tr>` +
+    `<tr><td>Energy charges</td><td>${money(energy)}</td></tr>` + rows +
+    `<tr><td>Fixed / meter charge</td><td>${money(fixed)}</td></tr>` +
+    `<tr><td>Fuel surcharge</td><td>${money(fuel)}</td></tr>` +
+    `<tr><td>Tax / duty (${num('duty')}%)</td><td>${money(duty)}</td></tr>` +
+    `<tr><td>Subsidy / discount</td><td>− ${money(disc)}</td></tr>` +
+    `<tr class="total"><td>Total payable</td><td>${money(total)}</td></tr>`;
+  $('bill').style.display = 'block';
+  $('bill').scrollIntoView({behavior:'smooth'});
+};
+
+renderSlabs(presets.slab);
+</script>
+</body>
+</html>
