@@ -1,3 +1,3 @@
-This is my first Git respository.Author.Raveena Rajput
+This is my first Git respository<br>.Author.Raveena Rajput
 # Electricity-bill-calculator-
 Electricity bill calculator web app built with HTML, CSS and JavaScript. Calculates any bill using custom slab rates, fixed charge, surcharge, tax and subsidy.
